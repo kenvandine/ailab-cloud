@@ -196,7 +196,7 @@ async def proxy_ws_root(target: str, websocket: WebSocket):
         await websocket.close(code=1008, reason="Not authenticated")
         return
     device_id, port = _parse_target(target)
-    await _do_proxy_ws(websocket, device_id, port, "/", user)
+    await _do_proxy_ws(websocket, device_id, port, "", user)
 
 
 @router.websocket("/d/{target}/{path:path}")
