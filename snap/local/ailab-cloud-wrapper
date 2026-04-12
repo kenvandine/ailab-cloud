@@ -1,0 +1,35 @@
+#!/bin/bash
+# Wrapper for the ailab-cloud hub daemon.
+# Reads snap settings and exports them as environment variables,
+# then exec's uvicorn. Nothing is hardcoded here.
+set -euo pipefail
+
+DOMAIN=$(snapctl get domain)
+GITHUB_CLIENT_ID=$(snapctl get github.client-id)
+GITHUB_CLIENT_SECRET=$(snapctl get github.client-secret)
+SESSION_SECRET=$(snapctl get session.secret)
+REDIS_URL=$(snapctl get redis.url)
+HOST=$(snapctl get web.host)
+PORT=$(snapctl get web.port)
+
+# Abort with a clear message if required settings are missing
+for VAR_NAME in DOMAIN GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SESSION_SECRET; do
+    eval "VAL=\$$VAR_NAME"
+    if [ -z "$VAL" ]; then
+        echo "ERROR: snap setting '$(echo "$VAR_NAME" | tr '[:upper:]' '[:lower:]' | tr '_' '.')' is required but not set." >&2
+        echo "Run: snap set ailab-cloud <setting>=<value>" >&2
+        exit 1
+    fi
+done
+
+export AILAB_CLOUD_DOMAIN="$DOMAIN"
+export AILAB_CLOUD_GITHUB_CLIENT_ID="$GITHUB_CLIENT_ID"
+export AILAB_CLOUD_GITHUB_CLIENT_SECRET="$GITHUB_CLIENT_SECRET"
+export AILAB_CLOUD_SESSION_SECRET="$SESSION_SECRET"
+export AILAB_CLOUD_REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
+export AILAB_CLOUD_HOST="${HOST:-0.0.0.0}"
+export AILAB_CLOUD_PORT="${PORT:-8080}"
+
+exec "$SNAP/bin/uvicorn" ailab_cloud.main:app \
+    --host "$AILAB_CLOUD_HOST" \
+    --port "$AILAB_CLOUD_PORT"

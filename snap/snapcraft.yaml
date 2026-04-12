@@ -1,0 +1,72 @@
+name: ailab-cloud
+adopt-info: ailab-cloud
+base: core24
+summary: Secure tunnel hub for remote access to AI Lab home devices
+description: |
+  AI Lab Cloud is the rendezvous server for the AI Lab ecosystem. It
+  authenticates users via GitHub OAuth and proxies browser traffic to
+  home AI Lab instances over persistent WebSocket tunnels — no VPN or
+  port forwarding required.
+
+  Required configuration (set before starting the hub service):
+
+    snap set ailab-cloud domain=cloud.example.com
+    snap set ailab-cloud github.client-id=<GitHub OAuth App client ID>
+    snap set ailab-cloud github.client-secret=<GitHub OAuth App client secret>
+
+  Optional:
+
+    snap set ailab-cloud redis.url=redis://localhost:6379
+    snap set ailab-cloud web.host=0.0.0.0
+    snap set ailab-cloud web.port=8080
+
+  The session secret is auto-generated on first configure if not supplied.
+
+  Deployment notes:
+    - Configure a wildcard DNS A record: *.your-domain.com → this server's IP
+    - Place Nginx (or Caddy) in front for TLS termination and wildcard certs
+    - Redis must be reachable at the configured redis.url
+
+license: GPL-3.0+
+grade: stable
+confinement: strict
+
+contact: https://github.com/lemonade-sdk/ailab-cloud/issues
+issues: https://github.com/lemonade-sdk/ailab-cloud/issues
+source-code: https://github.com/lemonade-sdk/ailab-cloud
+website: https://github.com/lemonade-sdk/ailab-cloud
+
+apps:
+  hub:
+    command: bin/ailab-cloud-wrapper
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+
+parts:
+  ailab-cloud:
+    plugin: python
+    source: .
+    build-packages:
+      - git
+    python-packages:
+      - fastapi>=0.110.0
+      - uvicorn[standard]>=0.29.0
+      - httpx>=0.27.0
+      - redis>=5.0.0
+      - itsdangerous>=2.1.0
+    override-pull: |
+      craftctl default
+      VERSION=$(craftctl get version)
+      if [ -z "$VERSION" ]; then
+        VERSION=$(git describe --tags --abbrev=10 2>/dev/null || echo "0.0.0")
+        craftctl set version="$VERSION"
+      fi
+
+  wrapper:
+    plugin: dump
+    source: snap/local
+    organize:
+      ailab-cloud-wrapper: bin/ailab-cloud-wrapper
