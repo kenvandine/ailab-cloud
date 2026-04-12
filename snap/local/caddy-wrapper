@@ -1,0 +1,109 @@
+#!/bin/bash
+# Generate a Caddyfile from snap settings and start Caddy.
+#
+# Caddy handles:
+#   - TLS termination (HTTP-01 for bare domain, DNS-01 for wildcard subdomains)
+#   - Reverse proxying to the hub on 127.0.0.1:$PORT
+#   - Automatic certificate issuance and renewal (no certbot needed)
+#
+# Wildcard subdomain TLS (*.domain) requires dns.provider + dns.token.
+# Without those, only the bare domain gets a certificate and wildcard
+# subdomain routing is unavailable — use path-based routing (/d/...) instead.
+#
+# Restart this service after changing domain or DNS settings:
+#   snap restart ailab-cloud.caddy
+set -euo pipefail
+
+DOMAIN=$(snapctl get domain)
+PORT=$(snapctl get web.port)
+DNS_PROVIDER=$(snapctl get dns.provider)
+DNS_TOKEN=$(snapctl get dns.token)
+
+if [ -z "$DOMAIN" ]; then
+    echo "ERROR: snap setting 'domain' is required." >&2
+    echo "Run: snap set ailab-cloud domain=<your-domain>" >&2
+    exit 1
+fi
+
+PORT="${PORT:-8080}"
+
+CADDY_DATA="$SNAP_COMMON/caddy"
+mkdir -p "$CADDY_DATA"
+CADDYFILE="$CADDY_DATA/Caddyfile"
+
+# ── Build the TLS block for the wildcard server ───────────────────────────────
+
+tls_block() {
+    local provider="$1" token="$2"
+    case "$provider" in
+        cloudflare|digitalocean|hetzner|duckdns)
+            printf '    tls {\n        dns %s %s\n    }\n' "$provider" "$token"
+            ;;
+        route53)
+            local secret
+            secret=$(snapctl get dns.token-secret)
+            printf '    tls {\n        dns route53 {\n            access_key_id %s\n            secret_access_key %s\n        }\n    }\n' \
+                "$token" "$secret"
+            ;;
+        namecheap|godaddy)
+            local user
+            user=$(snapctl get dns.user)
+            printf '    tls {\n        dns %s {\n            api_user %s\n            api_key %s\n        }\n    }\n' \
+                "$provider" "$user" "$token"
+            ;;
+        *)
+            echo "" ;;
+    esac
+}
+
+# ── Write Caddyfile ───────────────────────────────────────────────────────────
+
+if [ -n "$DNS_PROVIDER" ] && [ -n "$DNS_TOKEN" ]; then
+    TLS_BLOCK=$(tls_block "$DNS_PROVIDER" "$DNS_TOKEN")
+
+    cat > "$CADDYFILE" <<EOF
+{
+    # Store ACME certificates in persistent snap data so they survive updates.
+    storage file_system {
+        root $CADDY_DATA
+    }
+    admin off
+}
+
+# Bare domain — hub UI, OAuth endpoints, tunnel registration.
+$DOMAIN {
+    reverse_proxy 127.0.0.1:$PORT
+}
+
+# Wildcard subdomains — each subdomain routes to a specific home device/port.
+# Requires dns.provider + dns.token for the DNS-01 ACME challenge.
+*.$DOMAIN {
+$TLS_BLOCK
+    reverse_proxy 127.0.0.1:$PORT
+}
+EOF
+
+    echo "INFO: Caddy configured with wildcard TLS for *.$DOMAIN via $DNS_PROVIDER."
+
+else
+    # No DNS credentials: HTTP-01 TLS for the bare domain only.
+    # Wildcard subdomains are not covered — use path-based routing (/d/...).
+    cat > "$CADDYFILE" <<EOF
+{
+    storage file_system {
+        root $CADDY_DATA
+    }
+    admin off
+}
+
+$DOMAIN {
+    reverse_proxy 127.0.0.1:$PORT
+}
+EOF
+
+    echo "INFO: dns.provider not set — TLS will cover $DOMAIN only (no wildcard)." >&2
+    echo "INFO: To enable wildcard subdomain routing, set dns.provider and dns.token," >&2
+    echo "INFO: then run: snap restart ailab-cloud.caddy" >&2
+fi
+
+exec "$SNAP/bin/caddy" run --config "$CADDYFILE"

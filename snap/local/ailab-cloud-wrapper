@@ -12,12 +12,13 @@ REDIS_URL=$(snapctl get redis.url)
 HOST=$(snapctl get web.host)
 PORT=$(snapctl get web.port)
 
-# Abort with a clear message if required settings are missing
+# Abort with a clear message if required settings are missing.
 for VAR_NAME in DOMAIN GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SESSION_SECRET; do
     eval "VAL=\$$VAR_NAME"
     if [ -z "$VAL" ]; then
-        echo "ERROR: snap setting '$(echo "$VAR_NAME" | tr '[:upper:]' '[:lower:]' | tr '_' '.')' is required but not set." >&2
-        echo "Run: snap set ailab-cloud <setting>=<value>" >&2
+        SETTING=$(echo "$VAR_NAME" | tr '[:upper:]' '[:lower:]' | tr '_' '.')
+        echo "ERROR: snap setting '$SETTING' is required but not set." >&2
+        echo "Run: snap set ailab-cloud $SETTING=<value>" >&2
         exit 1
     fi
 done
@@ -26,8 +27,9 @@ export AILAB_CLOUD_DOMAIN="$DOMAIN"
 export AILAB_CLOUD_GITHUB_CLIENT_ID="$GITHUB_CLIENT_ID"
 export AILAB_CLOUD_GITHUB_CLIENT_SECRET="$GITHUB_CLIENT_SECRET"
 export AILAB_CLOUD_SESSION_SECRET="$SESSION_SECRET"
-export AILAB_CLOUD_REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
-export AILAB_CLOUD_HOST="${HOST:-0.0.0.0}"
+# Default to the bundled Redis; can be overridden for external Redis.
+export AILAB_CLOUD_REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
+export AILAB_CLOUD_HOST="${HOST:-127.0.0.1}"
 export AILAB_CLOUD_PORT="${PORT:-8080}"
 
 exec "$SNAP/bin/uvicorn" ailab_cloud.main:app \

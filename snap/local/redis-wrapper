@@ -1,0 +1,16 @@
+#!/bin/bash
+# Start the bundled Redis server using snap data directories.
+# Redis binds only to 127.0.0.1 — it is never exposed externally.
+set -euo pipefail
+
+REDIS_DATA="$SNAP_COMMON/redis"
+mkdir -p "$REDIS_DATA"
+
+exec "$SNAP/usr/bin/redis-server" \
+    --daemonize no \
+    --bind 127.0.0.1 \
+    --port 6379 \
+    --dir "$REDIS_DATA" \
+    --dbfilename dump.rdb \
+    --save 60 1 \
+    --loglevel notice

@@ -1,11 +1,16 @@
 #!/bin/bash
 # Configure hook — runs every time `snap set ailab-cloud ...` is called.
-# Auto-generates a session secret if one hasn't been set yet.
 set -euo pipefail
 
+# Auto-generate the session secret once if it hasn't been set.
 SESSION_SECRET=$(snapctl get session.secret || true)
 if [ -z "$SESSION_SECRET" ]; then
     SESSION_SECRET=$(openssl rand -hex 32)
     snapctl set session.secret="$SESSION_SECRET"
-    echo "Generated new session secret."
+fi
+
+# If Caddy is already running, restart it so it picks up any domain or
+# DNS setting changes immediately (it regenerates its Caddyfile on start).
+if snapctl services ailab-cloud.caddy 2>/dev/null | grep -q active; then
+    snapctl restart ailab-cloud.caddy
 fi

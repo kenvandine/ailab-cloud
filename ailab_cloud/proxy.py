@@ -115,6 +115,12 @@ async def _do_proxy_http(request: Request, device_id: str, port: int, path: str,
     body = await request.body()
     headers = _strip_hop_by_hop(dict(request.headers))
 
+    # Tell the ailab web UI where it is in the tunnel so it can construct
+    # correct URLs for port-specific resources (e.g. the OpenClaw dashboard).
+    # Format matches the path-based proxy routes: /d/{device_id}
+    settings = request.app.state.settings
+    headers["x-ailab-tunnel-base"] = f"https://{settings.domain}/d/{device_id}"
+
     full_path = f"/{path}" if path else "/"
     if request.url.query:
         full_path += f"?{request.url.query}"

@@ -8,24 +8,35 @@ description: |
   home AI Lab instances over persistent WebSocket tunnels — no VPN or
   port forwarding required.
 
-  Required configuration (set before starting the hub service):
+  Fully self-contained: Redis, Caddy (TLS reverse proxy), and the hub
+  API server are all bundled. Point DNS at the server, set four snap
+  settings, and the service is live with a valid wildcard TLS certificate.
+
+  Required configuration:
 
     snap set ailab-cloud domain=cloud.example.com
     snap set ailab-cloud github.client-id=<GitHub OAuth App client ID>
     snap set ailab-cloud github.client-secret=<GitHub OAuth App client secret>
 
-  Optional:
+  Wildcard TLS via DNS-01 challenge (required for *.domain subdomain routing):
 
-    snap set ailab-cloud redis.url=redis://localhost:6379
-    snap set ailab-cloud web.host=0.0.0.0
-    snap set ailab-cloud web.port=8080
+    snap set ailab-cloud dns.provider=cloudflare
+    snap set ailab-cloud dns.token=<API token>
 
-  The session secret is auto-generated on first configure if not supplied.
+  Supported dns.provider values:
+    cloudflare, digitalocean, hetzner, duckdns, route53, namecheap, godaddy
 
-  Deployment notes:
-    - Configure a wildcard DNS A record: *.your-domain.com → this server's IP
-    - Place Nginx (or Caddy) in front for TLS termination and wildcard certs
-    - Redis must be reachable at the configured redis.url
+  For route53, also set:
+    snap set ailab-cloud dns.token-secret=<AWS secret access key>
+    (dns.token holds the access key ID)
+
+  For namecheap and godaddy, also set:
+    snap set ailab-cloud dns.user=<API username>
+    (dns.token holds the API key)
+
+  The session secret is auto-generated on first configure.
+  Restart caddy after changing domain or DNS settings:
+    snap restart ailab-cloud.caddy
 
 license: GPL-3.0+
 grade: stable
@@ -37,8 +48,25 @@ source-code: https://github.com/lemonade-sdk/ailab-cloud
 website: https://github.com/lemonade-sdk/ailab-cloud
 
 apps:
+  redis:
+    command: bin/redis-wrapper
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+
   hub:
     command: bin/ailab-cloud-wrapper
+    daemon: simple
+    restart-condition: on-failure
+    after: [redis]
+    plugs:
+      - network
+      - network-bind
+
+  caddy:
+    command: bin/caddy-wrapper
     daemon: simple
     restart-condition: on-failure
     plugs:
@@ -65,8 +93,36 @@ parts:
         craftctl set version="$VERSION"
       fi
 
+  redis:
+    plugin: nil
+    stage-packages:
+      - redis-server
+
+  caddy:
+    plugin: nil
+    build-packages:
+      - golang-go
+      - git
+      - ca-certificates
+    override-build: |
+      export GOPATH="$SNAPCRAFT_PART_BUILD/go"
+      export GOBIN="$GOPATH/bin"
+      export PATH="$GOBIN:$PATH"
+      go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+      xcaddy build \
+        --with github.com/caddy-dns/cloudflare \
+        --with github.com/caddy-dns/digitalocean \
+        --with github.com/caddy-dns/route53 \
+        --with github.com/caddy-dns/hetzner \
+        --with github.com/caddy-dns/duckdns \
+        --with github.com/caddy-dns/namecheap \
+        --with github.com/caddy-dns/godaddy \
+        --output "$SNAPCRAFT_PART_INSTALL/bin/caddy"
+
   wrapper:
     plugin: dump
     source: snap/local
     organize:
       ailab-cloud-wrapper: bin/ailab-cloud-wrapper
+      caddy-wrapper: bin/caddy-wrapper
+      redis-wrapper: bin/redis-wrapper
