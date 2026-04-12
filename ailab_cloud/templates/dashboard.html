@@ -63,11 +63,10 @@
         </svg>
         Show setup commands
       </summary>
-      <pre class="mt-2 bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-300 font-mono overflow-x-auto leading-relaxed">snap set ailab cloud.enabled=true
-snap set ailab cloud.host=https://{{ domain }}
+      <pre class="mt-2 bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-300 font-mono overflow-x-auto leading-relaxed">snap set ailab cloud.host={{ domain }}
 snap set ailab cloud.user={{ user }}
 snap set ailab cloud.token={{ token }}
-snap set ailab cloud.device-id=myhome
+snap set ailab cloud.device=myhome
 snap restart ailab.web</pre>
     </details>
   </section>
