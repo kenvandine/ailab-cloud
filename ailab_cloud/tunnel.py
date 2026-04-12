@@ -317,13 +317,29 @@ class TunnelRegistry:
         # Relay frames in both directions concurrently
         async def client_to_tunnel():
             try:
-                async for msg in client_ws.iter_bytes():
-                    await tunnel_ws.send_json({
-                        "type": "ws_frame",
-                        "conn_id": conn_id,
-                        "opcode": 2,  # binary
-                        "data": base64.b64encode(msg).decode(),
-                    })
+                while True:
+                    message = await client_ws.receive()
+                    mtype = message.get("type")
+                    if mtype == "websocket.disconnect":
+                        break
+                    if mtype != "websocket.receive":
+                        continue
+                    text = message.get("text")
+                    data = message.get("bytes")
+                    if text is not None:
+                        await tunnel_ws.send_json({
+                            "type": "ws_frame",
+                            "conn_id": conn_id,
+                            "opcode": 1,  # text
+                            "data": base64.b64encode(text.encode()).decode(),
+                        })
+                    elif data is not None:
+                        await tunnel_ws.send_json({
+                            "type": "ws_frame",
+                            "conn_id": conn_id,
+                            "opcode": 2,  # binary
+                            "data": base64.b64encode(data).decode(),
+                        })
             except WebSocketDisconnect:
                 pass
             finally:
