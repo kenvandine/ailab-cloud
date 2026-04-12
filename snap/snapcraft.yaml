@@ -56,6 +56,11 @@ apps:
       - network
       - network-bind
 
+  redis-cli:
+    command: usr/bin/redis-cli
+    plugs:
+      - network
+
   hub:
     command: bin/ailab-cloud-wrapper
     daemon: simple
