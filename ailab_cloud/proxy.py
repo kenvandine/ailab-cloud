@@ -188,7 +188,7 @@ async def proxy_http_path(
     return await _do_proxy_http(request, device_id, port, path, user)
 
 
-@router.websocket("/d/{target}/ws/{path:path}")
+@router.websocket("/d/{target}/{path:path}")
 async def proxy_ws_path(target: str, path: str, websocket: WebSocket):
     """Proxy a WebSocket connection to a home device using path-based routing."""
     user = websocket.session.get("github_user")
