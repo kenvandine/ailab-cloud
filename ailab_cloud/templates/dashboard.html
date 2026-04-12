@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}AI Lab Cloud{% endblock %}
+
+{% block header_right %}
+<div class="flex items-center gap-3">
+  <!-- GitHub username -->
+  <div class="flex items-center gap-2">
+    <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844a9.59 9.59 0 012.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+    </svg>
+    <span class="text-slate-300 text-sm font-medium">{{ user }}</span>
+  </div>
+  <a
+    href="/auth/logout"
+    class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+  >
+    Sign out
+  </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="p-6 flex flex-col gap-6 max-w-4xl w-full mx-auto">
+
+  <!-- ── Tunnel token ──────────────────────────────────────────────────────── -->
+  <section class="bg-slate-800 rounded-xl border border-slate-700 p-5 flex flex-col gap-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-white font-semibold text-sm">Tunnel Token</h2>
+        <p class="text-slate-400 text-xs mt-0.5">
+          Set this on your home AI Lab device to authorise the tunnel connection.
+        </p>
+      </div>
+      <button
+        onclick="regenerateToken()"
+        class="text-xs text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+        title="Generate a new token — invalidates the current one"
+      >
+        Regenerate
+      </button>
+    </div>
+
+    <!-- Token display -->
+    <div class="flex items-center gap-2">
+      <code
+        id="token-display"
+        class="flex-1 bg-slate-900 text-slate-300 text-xs font-mono rounded-lg px-3 py-2.5 border border-slate-700 truncate select-all"
+      >{{ token }}</code>
+      <button
+        onclick="copyToken()"
+        id="copy-btn"
+        class="shrink-0 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-2.5 rounded-lg transition-colors"
+      >
+        Copy
+      </button>
+    </div>
+
+    <!-- Setup snippet -->
+    <details class="group">
+      <summary class="text-xs text-slate-500 hover:text-slate-300 cursor-pointer list-none flex items-center gap-1 transition-colors select-none">
+        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+        Show setup commands
+      </summary>
+      <pre class="mt-2 bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-300 font-mono overflow-x-auto leading-relaxed">snap set ailab cloud.enabled=true
+snap set ailab cloud.host=https://{{ domain }}
+snap set ailab cloud.user={{ user }}
+snap set ailab cloud.token={{ token }}
+snap set ailab cloud.device-id=myhome
+snap restart ailab.web</pre>
+    </details>
+  </section>
+
+  <!-- ── Devices ───────────────────────────────────────────────────────────── -->
+  <section class="flex flex-col gap-3">
+    <h2 class="text-white font-semibold text-sm px-1">Your Devices</h2>
+
+    {% if devices %}
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {% for device in devices %}
+      <div class="bg-slate-800 rounded-xl border border-slate-700 p-5 flex flex-col gap-4">
+
+        <!-- Device header -->
+        <div class="flex items-start justify-between gap-2">
+          <h3 class="text-white font-semibold text-base truncate">{{ device.device_id }}</h3>
+          {% if device.connected %}
+          <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-400 ring-1 ring-green-500/30 shrink-0">
+            <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+            connected
+          </span>
+          {% else %}
+          <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-700 text-slate-400 ring-1 ring-slate-600 shrink-0">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+            offline
+          </span>
+          {% endif %}
+        </div>
+
+        <!-- Open buttons — one per forwarded port -->
+        {% if device.connected and device.ports %}
+        <div class="flex flex-col gap-1.5">
+          {% for port in device.ports %}
+          <a
+            href="/d/{{ device.device_id }}:{{ port }}/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center justify-center gap-2 w-full bg-lemon-500/15 hover:bg-lemon-500/25 border border-lemon-500/40 text-lemon-400 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            {% if port == 11500 %}Open AI Lab{% elif port == 18789 %}Open OpenClaw{% elif port == 3000 %}Open Nullclaw{% elif port == 18800 %}Open PicoClaw{% else %}Open :{{ port }}{% endif %}
+          </a>
+          {% endfor %}
+        </div>
+        {% elif not device.connected %}
+        <p class="text-slate-500 text-xs">
+          Device is not connected. Run
+          <code class="text-slate-400">snap restart ailab.web</code>
+          on your home machine.
+        </p>
+        {% endif %}
+
+        <!-- Port chips -->
+        {% if device.ports %}
+        <div class="flex flex-wrap gap-1">
+          {% for port in device.ports %}
+          <span class="bg-slate-700 text-slate-300 text-xs px-1.5 py-0.5 rounded">:{{ port }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+      </div>
+      {% endfor %}
+    </div>
+
+    {% else %}
+    <!-- No devices yet -->
+    <div class="text-center py-16 flex flex-col items-center gap-3">
+      <p class="text-slate-400 text-base">No devices connected yet.</p>
+      <p class="text-slate-500 text-sm max-w-sm">
+        Copy the tunnel token above and run the setup commands on your home
+        AI Lab machine to establish the tunnel.
+      </p>
+    </div>
+    {% endif %}
+
+  </section>
+
+</div>
+
+<script>
+  function copyToken() {
+    const token = document.getElementById('token-display').textContent.trim();
+    navigator.clipboard.writeText(token).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    });
+  }
+
+  function regenerateToken() {
+    if (!confirm('Regenerate the tunnel token? Your home device will disconnect until you update its token setting.')) return;
+    fetch('/auth/tunnel-token/regenerate', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('token-display').textContent = data.token;
+        // Refresh the page so the setup snippet also updates
+        location.reload();
+      })
+      .catch(() => alert('Failed to regenerate token. Please try again.'));
+  }
+</script>
+{% endblock %}

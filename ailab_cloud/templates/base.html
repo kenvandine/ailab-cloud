@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}AI Lab{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Ubuntu', 'system-ui', 'sans-serif'],
+          },
+          colors: {
+            slate: {
+              100: '#e2e8f0',
+              200: '#c8d0da',
+              300: '#aab2c0',
+              400: '#8892a4',
+              500: '#3d4460',
+              600: '#2e3348',
+              700: '#22263a',
+              800: '#1a1d26',
+              900: '#0f1117',
+              950: '#080a0f',
+            },
+            lemon: {
+              300: '#ffe580',
+              400: '#ffd340',
+              500: '#ffc832',
+              600: '#e6a800',
+              700: '#b37f00',
+            },
+          },
+        },
+      },
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100 font-sans flex flex-col">
+
+  <!-- Header — matches the AI Lab web UI header exactly -->
+  <header class="bg-slate-950 border-b border-slate-700 px-6 py-3 flex items-center justify-between shrink-0">
+    <div class="flex items-center gap-3">
+      <!-- Lemon logo — same SVG as the AI Lab web UI -->
+      <svg class="w-8 h-8 shrink-0" viewBox="0 0 32 32" fill="none">
+        <ellipse cx="16" cy="17" rx="11" ry="12" fill="url(#lemon-body)" />
+        <path d="M16 5 Q18 2 21 3" stroke="#6aab2e" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        <ellipse cx="16" cy="17" rx="11" ry="12" fill="none" stroke="#d4a800" stroke-width="0.5" opacity="0.4" />
+        <defs>
+          <radialGradient id="lemon-body" cx="40%" cy="35%" r="65%">
+            <stop offset="0%"   stop-color="#ffe580" />
+            <stop offset="60%"  stop-color="#ffc832" />
+            <stop offset="100%" stop-color="#e6a800" />
+          </radialGradient>
+        </defs>
+      </svg>
+      <div class="flex flex-col leading-tight">
+        <span class="text-white font-semibold text-base tracking-tight">AI Lab</span>
+        <span class="text-slate-400 text-xs font-light">A box for your agents</span>
+      </div>
+      <!-- Cloud badge — distinguishes the hub from local UI -->
+      <span class="ml-2 px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 text-xs font-medium border border-slate-600">
+        cloud
+      </span>
+    </div>
+
+    {% block header_right %}{% endblock %}
+  </header>
+
+  <!-- Page content -->
+  <main class="flex-1 flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+
+</body>
+</html>

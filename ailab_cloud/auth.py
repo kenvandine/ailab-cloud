@@ -69,41 +69,49 @@ async def login(request: Request):
 
 
 @router.get("/callback")
-async def callback(request: Request, code: str, state: str):
+async def callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    # GitHub may redirect here with ?error= if the user denied the app.
+    if error:
+        return RedirectResponse(f"/?error=GitHub authorisation denied: {error}")
+
     settings = _settings(request)
 
     expected_state = request.session.pop("oauth_state", None)
     if not expected_state or not secrets.compare_digest(expected_state, state):
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+        return RedirectResponse("/?error=Invalid OAuth state. Please try signing in again.")
 
-    async with httpx.AsyncClient() as client:
-        # Exchange code for access token
-        token_resp = await client.post(
-            _GITHUB_TOKEN_URL,
-            data={
-                "client_id": settings.github_client_id,
-                "client_secret": settings.github_client_secret,
-                "code": code,
-            },
-            headers={"Accept": "application/json"},
-        )
-        token_resp.raise_for_status()
-        access_token = token_resp.json().get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=502, detail="GitHub did not return a token")
+    try:
+        async with httpx.AsyncClient() as client:
+            # Exchange code for access token
+            token_resp = await client.post(
+                _GITHUB_TOKEN_URL,
+                data={
+                    "client_id": settings.github_client_id,
+                    "client_secret": settings.github_client_secret,
+                    "code": code,
+                },
+                headers={"Accept": "application/json"},
+            )
+            token_resp.raise_for_status()
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                return RedirectResponse("/?error=GitHub did not return an access token. Please try again.")
 
-        # Fetch user info
-        user_resp = await client.get(
-            _GITHUB_USER_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-        user_resp.raise_for_status()
-        github_user = user_resp.json().get("login")
-        if not github_user:
-            raise HTTPException(status_code=502, detail="Could not retrieve GitHub username")
+            # Fetch user info
+            user_resp = await client.get(
+                _GITHUB_USER_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            user_resp.raise_for_status()
+            github_user = user_resp.json().get("login")
+            if not github_user:
+                return RedirectResponse("/?error=Could not retrieve GitHub username. Please try again.")
+    except httpx.HTTPError as exc:
+        logger.warning("OAuth HTTP error: %s", exc)
+        return RedirectResponse("/?error=Could not reach GitHub. Please try again.")
 
     request.session["github_user"] = github_user
     logger.info("User %s logged in", github_user)
