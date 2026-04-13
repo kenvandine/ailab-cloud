@@ -9,7 +9,8 @@ to route browser traffic back to the home device.
 Protocol — messages are JSON over WebSocket text frames.
 
 Home device → Hub:
-  {"type": "register",  "github_user": "...", "device_id": "...", "ports": [...]}
+  {"type": "register",  "github_user": "...", "device_id": "...",
+                        "ports": [...], "token": "..."}
   {"type": "response",  "id": "<uuid>", "status": 200,
                         "headers": {...}, "body": "<base64>"}
   {"type": "ws_opened", "conn_id": "<uuid>"}
@@ -30,6 +31,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import secrets
 import uuid
 from dataclasses import dataclass, field
@@ -41,6 +43,9 @@ logger = logging.getLogger("ailab_cloud.tunnel")
 
 router = APIRouter(tags=["tunnel"])
 
+_DEVICE_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_GITHUB_USER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+
 
 # ── Device metadata ───────────────────────────────────────────────────────────
 
@@ -50,6 +55,63 @@ class DeviceInfo:
     device_id: str
     github_user: str
     ports: list[int]
+
+
+@dataclass
+class PendingRequest:
+    device_id: str
+    tunnel_ws: WebSocket
+    future: asyncio.Future
+
+
+@dataclass
+class WebSocketRelay:
+    device_id: str
+    tunnel_ws: WebSocket
+    queue: asyncio.Queue
+
+
+def _normalize_ports(raw_ports: object) -> list[int]:
+    if not isinstance(raw_ports, list):
+        raise ValueError("ports must be a list of integers")
+
+    ports: list[int] = []
+    seen: set[int] = set()
+    for raw in raw_ports:
+        if not isinstance(raw, int):
+            raise ValueError("ports must contain integers")
+        if not 1 <= raw <= 65535:
+            raise ValueError("ports must be between 1 and 65535")
+        if raw not in seen:
+            ports.append(raw)
+            seen.add(raw)
+
+    if not ports:
+        raise ValueError("at least one port is required")
+
+    return ports
+
+
+def _parse_bearer_token(authorization: str) -> str:
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
+def _extract_tunnel_token(ws: WebSocket, msg: dict) -> str:
+    auth_header = _parse_bearer_token(ws.headers.get("authorization", ""))
+    if auth_header:
+        return auth_header
+
+    token = msg.get("token", "")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+
+    legacy_token = ws.query_params.get("token", "").strip()
+    if legacy_token:
+        logger.warning("Tunnel client for %s is still sending its token in the URL", ws.client)
+    return legacy_token
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -73,11 +135,14 @@ class TunnelRegistry:
         # device_id → github_user (fast in-memory lookup)
         self._device_owners: dict[str, str] = {}
 
+        # device_id → advertised ports
+        self._device_ports: dict[str, tuple[int, ...]] = {}
+
         # request_id → asyncio.Future waiting for an HTTP response frame
-        self._pending: dict[str, asyncio.Future] = {}
+        self._pending: dict[str, PendingRequest] = {}
 
         # conn_id → asyncio.Queue relaying WS frames from home to hub
-        self._ws_queues: dict[str, asyncio.Queue] = {}
+        self._ws_queues: dict[str, WebSocketRelay] = {}
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -124,6 +189,24 @@ class TunnelRegistry:
         # Fall back to Redis (device registered but currently offline)
         return await self._redis.hget(f"device:{device_id}", "github_user")
 
+    async def get_device_ports(self, device_id: str) -> list[int]:
+        ports = self._device_ports.get(device_id)
+        if ports is not None:
+            return list(ports)
+
+        raw_ports = await self._redis.hget(f"device:{device_id}", "ports")
+        if not raw_ports:
+            return []
+
+        try:
+            return _normalize_ports(json.loads(raw_ports))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Device %s has invalid stored port metadata", device_id)
+            return []
+
+    async def is_port_allowed(self, device_id: str, port: int) -> bool:
+        return port in await self.get_device_ports(device_id)
+
     def is_connected(self, device_id: str) -> bool:
         return device_id in self._connections
 
@@ -143,7 +226,7 @@ class TunnelRegistry:
 
     # ── Tunnel WebSocket handler ───────────────────────────────────────────────
 
-    async def handle_tunnel(self, ws: WebSocket, token: str) -> None:
+    async def handle_tunnel(self, ws: WebSocket) -> None:
         """Accept and manage a tunnel connection from a home device."""
         await ws.accept()
 
@@ -163,25 +246,52 @@ class TunnelRegistry:
 
         github_user: str = msg.get("github_user", "").strip()
         device_id: str = msg.get("device_id", "").strip()
-        ports: list[int] = msg.get("ports", [11500])
+        token = _extract_tunnel_token(ws, msg)
 
-        if not github_user or not device_id:
-            await ws.close(code=1008, reason="github_user and device_id are required")
+        if not github_user or not device_id or not token:
+            await ws.close(code=1008, reason="github_user, device_id, and token are required")
+            return
+
+        if not _GITHUB_USER_RE.fullmatch(github_user):
+            await ws.close(code=1008, reason="Invalid github_user")
+            return
+
+        if not _DEVICE_ID_RE.fullmatch(device_id):
+            await ws.close(code=1008, reason="Invalid device_id")
+            return
+
+        try:
+            ports = _normalize_ports(msg.get("ports", [11500]))
+        except ValueError as exc:
+            await ws.close(code=1008, reason=str(exc))
             return
 
         if not await self._validate_token(github_user, token):
             await ws.close(code=1008, reason="Invalid token")
             return
 
+        existing_owner = await self.get_device_owner(device_id)
+        if existing_owner and existing_owner != github_user:
+            await ws.close(code=1008, reason="Device ID is already claimed by another user")
+            return
+
         # Persist and register
+        prior_ws = self._connections.get(device_id)
         self._connections[device_id] = ws
         self._device_owners[device_id] = github_user
+        self._device_ports[device_id] = tuple(ports)
 
         await self._redis.hset(f"device:{device_id}", mapping={
             "github_user": github_user,
             "ports": json.dumps(ports),
         })
         await self._redis.sadd(f"user:{github_user}:devices", device_id)
+
+        if prior_ws is not None and prior_ws is not ws:
+            try:
+                await prior_ws.close(code=1012, reason="Tunnel replaced by a new connection")
+            except Exception:
+                logger.debug("Failed to close previous tunnel for %s", device_id)
 
         logger.info("Device %s registered for user %s (ports: %s)",
                     device_id, github_user, ports)
@@ -191,9 +301,11 @@ class TunnelRegistry:
         try:
             await self._receive_loop(device_id, ws)
         finally:
-            self._connections.pop(device_id, None)
-            self._device_owners.pop(device_id, None)
-            logger.info("Device %s disconnected", device_id)
+            if self._connections.get(device_id) is ws:
+                self._connections.pop(device_id, None)
+                self._device_owners.pop(device_id, None)
+                self._device_ports.pop(device_id, None)
+                logger.info("Device %s disconnected", device_id)
 
     async def _receive_loop(self, device_id: str, ws: WebSocket) -> None:
         try:
@@ -209,16 +321,16 @@ class TunnelRegistry:
                 if msg_type == "response":
                     # An HTTP response returning from the home device
                     req_id: str = data.get("id", "")
-                    future = self._pending.pop(req_id, None)
-                    if future and not future.done():
-                        future.set_result(data)
+                    pending = self._pending.pop(req_id, None)
+                    if pending and not pending.future.done():
+                        pending.future.set_result(data)
 
                 elif msg_type in ("ws_frame", "ws_opened", "ws_error", "ws_close"):
                     # A WebSocket relay message
                     conn_id: str = data.get("conn_id", "")
-                    queue = self._ws_queues.get(conn_id)
-                    if queue:
-                        await queue.put(data)
+                    relay = self._ws_queues.get(conn_id)
+                    if relay:
+                        await relay.queue.put(data)
 
                 else:
                     logger.debug("Device %s: unhandled message type %r", device_id, msg_type)
@@ -227,13 +339,22 @@ class TunnelRegistry:
             pass
 
         # Unblock any callers that are waiting on this device
-        for future in self._pending.values():
-            if not future.done():
-                future.set_exception(RuntimeError(f"Device {device_id} disconnected"))
-        self._pending.clear()
+        for req_id, pending in list(self._pending.items()):
+            if pending.tunnel_ws is not ws:
+                continue
+            self._pending.pop(req_id, None)
+            if not pending.future.done():
+                pending.future.set_exception(RuntimeError(f"Device {device_id} disconnected"))
 
-        for queue in self._ws_queues.values():
-            await queue.put({"type": "ws_close", "conn_id": None, "reason": "device disconnected"})
+        for conn_id, relay in list(self._ws_queues.items()):
+            if relay.tunnel_ws is not ws:
+                continue
+            self._ws_queues.pop(conn_id, None)
+            await relay.queue.put({
+                "type": "ws_close",
+                "conn_id": conn_id,
+                "reason": "device disconnected",
+            })
 
     # ── HTTP proxying ─────────────────────────────────────────────────────────
 
@@ -254,7 +375,11 @@ class TunnelRegistry:
         req_id = str(uuid.uuid4())
         loop = asyncio.get_event_loop()
         future: asyncio.Future = loop.create_future()
-        self._pending[req_id] = future
+        self._pending[req_id] = PendingRequest(
+            device_id=device_id,
+            tunnel_ws=ws,
+            future=future,
+        )
 
         envelope = {
             "type": "request",
@@ -272,7 +397,9 @@ class TunnelRegistry:
         except asyncio.TimeoutError:
             raise RuntimeError("Tunnel request timed out")
         finally:
-            self._pending.pop(req_id, None)
+            pending = self._pending.get(req_id)
+            if pending and pending.future is future:
+                self._pending.pop(req_id, None)
 
     # ── WebSocket proxying ────────────────────────────────────────────────────
 
@@ -292,7 +419,8 @@ class TunnelRegistry:
 
         conn_id = str(uuid.uuid4())
         queue: asyncio.Queue = asyncio.Queue()
-        self._ws_queues[conn_id] = queue
+        relay = WebSocketRelay(device_id=device_id, tunnel_ws=tunnel_ws, queue=queue)
+        self._ws_queues[conn_id] = relay
 
         # Ask the home device to open a WebSocket to the target path/port.
         # Forward selected browser headers (e.g. Origin) so local services
@@ -311,12 +439,16 @@ class TunnelRegistry:
         try:
             ack = await asyncio.wait_for(queue.get(), timeout=10)
         except asyncio.TimeoutError:
-            self._ws_queues.pop(conn_id, None)
+            current = self._ws_queues.get(conn_id)
+            if current is relay:
+                self._ws_queues.pop(conn_id, None)
             await client_ws.close(code=1011, reason="WS open timed out")
             return
 
         if ack.get("type") == "ws_error":
-            self._ws_queues.pop(conn_id, None)
+            current = self._ws_queues.get(conn_id)
+            if current is relay:
+                self._ws_queues.pop(conn_id, None)
             await client_ws.close(code=1011, reason=ack.get("error", "WS open failed"))
             return
 
@@ -377,18 +509,20 @@ class TunnelRegistry:
         try:
             await asyncio.gather(client_to_tunnel(), tunnel_to_client())
         finally:
-            self._ws_queues.pop(conn_id, None)
+            current = self._ws_queues.get(conn_id)
+            if current is relay:
+                self._ws_queues.pop(conn_id, None)
 
 
 # ── FastAPI route ─────────────────────────────────────────────────────────────
 
 
 @router.websocket("/tunnel/register")
-async def tunnel_register(websocket: WebSocket, token: str):
+async def tunnel_register(websocket: WebSocket):
     """Endpoint for home devices to establish their persistent tunnel.
 
-    The home device passes its tunnel token as a query parameter:
-        wss://<hub>/tunnel/register?token=<token>
+    The home device presents its tunnel token in the Authorization header
+    or in the initial register message.
     """
     registry: TunnelRegistry = websocket.app.state.registry
-    await registry.handle_tunnel(websocket, token)
+    await registry.handle_tunnel(websocket)

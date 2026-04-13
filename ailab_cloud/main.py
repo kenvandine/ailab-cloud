@@ -54,7 +54,12 @@ def create_app() -> FastAPI:
     app.state.settings = settings
 
     # Session middleware must be added before any route that uses request.session.
-    app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.session_secret,
+        https_only=settings.session_https_only,
+        same_site="lax",
+    )
 
     # CORS: allow the hub's own domain and all device subdomains.
     app.add_middleware(

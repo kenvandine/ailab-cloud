@@ -126,7 +126,8 @@ Replace `cloud.example.com` with your chosen domain or subdomain.
 | `mydevice-18800.cloud.example.com` | PicoClaw — port 18800 |
 
 `mydevice` is the device ID you set on your home machine in
-[step 6](#6-connect-your-home-ai-lab).
+[step 6](#6-connect-your-home-ai-lab). Device IDs must use lowercase letters,
+digits, and hyphens, and they are globally unique on the hub.
 
 **DNS propagation tips:**
 
@@ -289,11 +290,15 @@ sudo snap logs ailab-cloud.caddy  -f
    `github_user` the home device registered under.
 
 2. **Tunnel token** — a random 32-byte secret stored in Redis and issued per
-   GitHub user. The home device must present this token when opening the
-   tunnel. An unauthenticated device cannot claim any GitHub username.
+    GitHub user. The home device must present this token when opening the
+    tunnel. An unauthenticated device cannot claim any GitHub username.
 
 3. **TLS** — all browser↔hub and (optionally) hub↔home-device traffic is
-   encrypted. Caddy provisions and renews certificates automatically via ACME.
+    encrypted. Caddy provisions and renews certificates automatically via ACME.
+
+4. **Device and port binding** — a `device_id` stays bound to the GitHub user
+   that first claimed it, and the hub only forwards to ports the home device
+   explicitly advertised during registration.
 
 **What the hub can see:**
 
@@ -398,7 +403,7 @@ start and exported as `AILAB_CLOUD_*` environment variables.
 | `cloud.host` | Hub URL, e.g. `https://cloud.example.com` |
 | `cloud.user` | Your GitHub username |
 | `cloud.token` | Tunnel token from `/auth/tunnel-token` |
-| `cloud.device-id` | Short identifier; becomes part of the URL |
+| `cloud.device-id` | Short identifier using lowercase letters, digits, and hyphens; becomes part of the URL and must be unique on the hub |
 
 ---
 

@@ -102,12 +102,18 @@ def _strip_hop_by_hop(headers: dict) -> dict:
     return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP}
 
 
+async def _ensure_port_allowed(registry, device_id: str, port: int) -> None:
+    if not await registry.is_port_allowed(device_id, port):
+        raise HTTPException(status_code=403, detail="Port is not exposed by device")
+
+
 async def _do_proxy_http(request: Request, device_id: str, port: int, path: str, user: str):
     registry = request.app.state.registry
 
     owner = await registry.get_device_owner(device_id)
     if owner != user:
         raise HTTPException(status_code=403, detail="Access denied")
+    await _ensure_port_allowed(registry, device_id, port)
 
     if not registry.is_connected(device_id):
         raise HTTPException(status_code=502, detail="Device is not connected")
@@ -154,6 +160,9 @@ async def _do_proxy_ws(websocket: WebSocket, device_id: str, port: int, path: st
     owner = await registry.get_device_owner(device_id)
     if owner != user:
         await websocket.close(code=1008, reason="Access denied")
+        return
+    if not await registry.is_port_allowed(device_id, port):
+        await websocket.close(code=1008, reason="Port is not exposed by device")
         return
 
     if not registry.is_connected(device_id):
