@@ -160,6 +160,14 @@ async def _do_proxy_ws(websocket: WebSocket, device_id: str, port: int, path: st
         await websocket.close(code=1011, reason="Device is not connected")
         return
 
+    # Capture headers from the browser upgrade request before accepting.
+    # We forward Origin so local services that enforce CORS on WS upgrades
+    # (e.g. openclaw gateway) see the real browser origin rather than nothing.
+    fwd_headers: dict[str, str] = {}
+    origin = websocket.headers.get("origin", "")
+    if origin:
+        fwd_headers["origin"] = origin
+
     await websocket.accept()
     full_path = f"/{path}" if path else "/"
     if websocket.url.query:
@@ -169,6 +177,7 @@ async def _do_proxy_ws(websocket: WebSocket, device_id: str, port: int, path: st
         path=full_path,
         port=port,
         client_ws=websocket,
+        headers=fwd_headers,
     )
 
 

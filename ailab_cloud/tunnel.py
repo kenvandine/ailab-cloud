@@ -282,6 +282,7 @@ class TunnelRegistry:
         path: str,
         port: int,
         client_ws: WebSocket,
+        headers: dict | None = None,
     ) -> None:
         """Proxy a browser WebSocket connection through the tunnel."""
         tunnel_ws = self._connections.get(device_id)
@@ -293,13 +294,18 @@ class TunnelRegistry:
         queue: asyncio.Queue = asyncio.Queue()
         self._ws_queues[conn_id] = queue
 
-        # Ask the home device to open a WebSocket to the target path/port
-        await tunnel_ws.send_json({
+        # Ask the home device to open a WebSocket to the target path/port.
+        # Forward selected browser headers (e.g. Origin) so local services
+        # that enforce CORS on WS upgrades receive the real browser context.
+        envelope: dict = {
             "type": "ws_open",
             "conn_id": conn_id,
             "port": port,
             "path": path,
-        })
+        }
+        if headers:
+            envelope["headers"] = headers
+        await tunnel_ws.send_json(envelope)
 
         # Wait for the home device to confirm the connection is open
         try:
