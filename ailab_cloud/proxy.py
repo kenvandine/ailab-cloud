@@ -162,6 +162,8 @@ async def _do_proxy_ws(websocket: WebSocket, device_id: str, port: int, path: st
 
     await websocket.accept()
     full_path = f"/{path}" if path else "/"
+    if websocket.url.query:
+        full_path += f"?{websocket.url.query}"
     await registry.proxy_websocket(
         device_id=device_id,
         path=full_path,
